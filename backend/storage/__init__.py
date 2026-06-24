@@ -1,0 +1,1 @@
+"""CreoAd storage helpers."""

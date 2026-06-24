@@ -1,0 +1,31 @@
+{
+  "scenes": [
+    {
+      "description": "scene 0",
+      "text": "Acme value 0",
+      "duration": 6
+    },
+    {
+      "description": "scene 1",
+      "text": "Acme value 1",
+      "duration": 6
+    },
+    {
+      "description": "scene 2",
+      "text": "Acme value 2",
+      "duration": 6
+    },
+    {
+      "description": "scene 3",
+      "text": "Acme value 3",
+      "duration": 6
+    },
+    {
+      "description": "scene 4",
+      "text": "Acme value 4",
+      "duration": 6
+    }
+  ],
+  "narration": "Acme helps businesses grow.",
+  "music_suggestion": "upbeat"
+}

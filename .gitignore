@@ -1,0 +1,63 @@
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Backend
+backend/__pycache__/
+backend/*.py[cod]
+backend/*$py.class
+backend/.pytest_cache/
+backend/.venv/
+backend/venv/
+backend/ENV/
+
+# Frontend
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/.env.local
+frontend/.env.*.local
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+docker-compose.override.yml
+
+# Temporary files
+/tmp/creoAd_jobs/
+*.log
+*.pid
+
+# Database
+*.db
+*.sqlite
+
+# Build artifacts
+dist/
+build/
+
+# Local outputs and generated files
+minio_data/
+output/
+logs/
+*.mp4
+*.jpg
+concat_test.txt
+dump.rdb
+
+# Additional environment / caching
+.antigravity/
+.local/
+.pytest_cache/
+.venv/
+

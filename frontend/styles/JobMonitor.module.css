@@ -1,0 +1,194 @@
+.monitor {
+  background: #fff;
+  border: 1.5px solid #0a0a0a;
+  border-radius: 14px;
+  padding: 18px;
+  box-shadow: 4px 4px 0 #0a0a0a;
+}
+
+.header {
+  text-align: center;
+  margin-bottom: 1rem;
+}
+
+.header h2 {
+  margin: 0;
+  color: #0a0a0a;
+  font-size: 1.35rem;
+}
+
+.elapsed {
+  font-size: 1.3rem;
+  color: #4f46e5;
+  font-weight: 600;
+  margin: 0.5rem 0 0 0;
+  font-family: monospace;
+}
+
+.progressContainer {
+  display: flex;
+  justify-content: space-around;
+  margin-bottom: 1rem;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.progressStage {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: #f0f0ee;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  color: #888;
+  transition: all 0.3s;
+}
+
+.progressStage.active {
+  background: #4f46e5;
+  color: white;
+}
+
+.progressStage.current {
+  animation: pulse 1s infinite;
+  box-shadow: 0 0 15px rgba(79, 70, 229, 0.35);
+}
+
+@keyframes pulse {
+  0% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.1);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+.currentStage {
+  text-align: center;
+  margin-bottom: 1rem;
+}
+
+.currentStage h3 {
+  margin: 0 0 0.5rem 0;
+  color: #0a0a0a;
+}
+
+.message {
+  color: #666;
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.timeline {
+  margin: 0.75rem 0 1rem;
+  padding: 0.85rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  background: #fafafa;
+}
+
+.timelineItem {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-start;
+}
+
+.timelineItem + .timelineItem {
+  margin-top: 0.7rem;
+}
+
+.timelineDot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  margin-top: 0.35rem;
+  background: #cbd5e1;
+  flex: 0 0 auto;
+}
+
+.timelineDot.running {
+  background: #f59e0b;
+  box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.18);
+}
+
+.timelineDot.success {
+  background: #16a34a;
+}
+
+.timelineDot.error {
+  background: #dc2626;
+}
+
+.timelineBody {
+  min-width: 0;
+}
+
+.timelineTitle {
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: #111827;
+}
+
+.timelineMessage {
+  font-size: 0.88rem;
+  color: #6b7280;
+  margin-top: 0.1rem;
+  word-break: break-word;
+}
+
+@media (max-width: 640px) {
+  .monitor {
+    padding: 14px;
+  }
+
+  .progressContainer {
+    gap: 0.5rem;
+  }
+
+  .progressStage {
+    width: 38px;
+    height: 38px;
+  }
+}
+
+.animation {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 1rem;
+}
+
+.spinner {
+  width: 40px;
+  height: 40px;
+  border: 4px solid #eee;
+  border-top: 4px solid #ff5c00;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+.complete {
+  text-align: center;
+  padding: 1rem;
+  background: #e8f5e9;
+  border-radius: 8px;
+}
+
+.complete p {
+  margin: 0;
+  color: #2e7d32;
+  font-weight: 600;
+}

@@ -1,0 +1,72 @@
+.container {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+}
+
+.header {
+  text-align: center;
+  color: white;
+  padding: 3rem 1rem 2rem;
+}
+
+.header h1 {
+  font-size: 3rem;
+  margin: 0;
+  font-weight: 800;
+}
+
+.header p {
+  margin: 0.5rem 0 0 0;
+  font-size: 1.1rem;
+  opacity: 0.9;
+}
+
+.main {
+  flex: 1;
+  max-width: 1000px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 2rem 1rem;
+}
+
+.error {
+  background: #fee;
+  border: 2px solid #f66;
+  border-radius: 12px;
+  padding: 2rem;
+  text-align: center;
+}
+
+.error h3 {
+  color: #d00;
+  margin: 0 0 0.5rem 0;
+}
+
+.error p {
+  color: #333;
+  margin: 0.5rem 0;
+}
+
+.error button {
+  background: #d00;
+  color: white;
+  border: none;
+  padding: 0.75rem 1.5rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 1rem;
+  margin-top: 1rem;
+}
+
+.error button:hover {
+  background: #b00;
+}
+
+.footer {
+  text-align: center;
+  color: rgba(255, 255, 255, 0.8);
+  padding: 2rem 1rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.2);
+}

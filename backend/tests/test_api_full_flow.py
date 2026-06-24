@@ -1,0 +1,279 @@
+from __future__ import annotations
+
+from pathlib import Path
+import os
+import sys
+import types
+import uuid
+
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+
+BACKEND_DIR = Path(__file__).resolve().parents[1]
+if str(BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(BACKEND_DIR))
+
+# Prevent import-time DB initialization from requiring external Postgres.
+os.environ["DATABASE_URL"] = "sqlite:///./test_bootstrap_flow.db"
+
+import config
+
+config.settings.database_url = "sqlite:///./test_bootstrap_flow.db"
+
+
+if "pydub" not in sys.modules:
+    pydub_stub = types.ModuleType("pydub")
+    generators_stub = types.ModuleType("pydub.generators")
+
+    class _AudioSegmentStub:
+        @staticmethod
+        def from_file(_path):
+            return _AudioSegmentStub()
+
+        @staticmethod
+        def silent(duration=0):
+            _ = duration
+            return _AudioSegmentStub()
+
+        def export(self, _path, format="mp3"):
+            _ = format
+            return None
+
+        def __add__(self, _value):
+            return self
+
+        def __mul__(self, _value):
+            return self
+
+        def __getitem__(self, _slice):
+            return self
+
+        def overlay(self, _other):
+            return self
+
+        def __len__(self):
+            return 1000
+
+    class _SineStub:
+        def __init__(self, _freq):
+            pass
+
+        def to_audio_segment(self, duration=1000):
+            _ = duration
+            return _AudioSegmentStub()
+
+    pydub_stub.AudioSegment = _AudioSegmentStub
+    generators_stub.Sine = _SineStub
+    sys.modules["pydub"] = pydub_stub
+    sys.modules["pydub.generators"] = generators_stub
+
+
+import jobs
+import main
+from models import Base, Campaign
+
+
+class FakeRedis:
+    def __init__(self):
+        self.store = {}
+
+    def hset(self, key, mapping):
+        bucket = self.store.setdefault(key, {})
+        bucket.update(mapping)
+
+    def hgetall(self, key):
+        return dict(self.store.get(key, {}))
+
+    def ping(self):
+        return True
+
+
+class FakeRQJob:
+    def __init__(self, job_id: str):
+        self.id = job_id
+        self.result = None
+        self.exc_info = None
+        self._status = "queued"
+
+    @property
+    def is_finished(self):
+        return self._status == "finished"
+
+    @property
+    def is_failed(self):
+        return self._status == "failed"
+
+    def get_status(self):
+        return self._status
+
+
+class FakeQueue:
+    def __init__(self, registry: dict[str, FakeRQJob]):
+        self.registry = registry
+
+    def enqueue(self, fn, *args, **kwargs):
+        _ = kwargs.pop("job_timeout", None)
+        job_id = f"job-{uuid.uuid4().hex[:8]}"
+        job = FakeRQJob(job_id)
+        self.registry[job_id] = job
+
+        try:
+            result = fn(*args, **kwargs, job_id=job_id)
+            job.result = result
+            job._status = "finished"
+        except Exception as exc:  # pragma: no cover
+            job.exc_info = str(exc)
+            job._status = "failed"
+
+        return job
+
+
+def test_full_user_to_video_flow_with_google_input(tmp_path, monkeypatch):
+    db_path = tmp_path / "flow.db"
+    engine = create_engine(f"sqlite:///{db_path}")
+    SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
+    Base.metadata.create_all(bind=engine)
+
+    fake_redis = FakeRedis()
+    job_registry: dict[str, FakeRQJob] = {}
+
+    monkeypatch.setattr(main, "engine", engine)
+    monkeypatch.setattr(main, "SessionLocal", SessionLocal)
+    monkeypatch.setattr(main, "redis_conn", fake_redis)
+    monkeypatch.setattr(main, "q", FakeQueue(job_registry))
+
+    monkeypatch.setattr(jobs, "engine", engine)
+    monkeypatch.setattr(jobs, "SessionLocal", SessionLocal)
+    monkeypatch.setattr(jobs, "redis_conn", fake_redis)
+    monkeypatch.setattr(jobs, "get_current_job", lambda: None)
+
+    def fake_fetch(job_id, connection=None):
+        _ = connection
+        return job_registry[job_id]
+
+    import rq.job
+
+    monkeypatch.setattr(rq.job.Job, "fetch", staticmethod(fake_fetch))
+
+    from modules.agents import LLMAgent
+    def fake_generate(*args, **kwargs):
+        raise Exception("Mock LLM to trigger fallbacks")
+    monkeypatch.setattr(LLMAgent, "generate", fake_generate)
+
+    def fake_scrape(url):
+        return {
+            "url": url,
+            "company_name": "Google",
+            "description": "Search and AI services",
+            "products": ["Search", "Cloud", "Workspace"],
+            "industry": "technology",
+            "call_to_action": "Learn more",
+        }
+
+    def fake_script(_brand, **kwargs):
+        return {
+            "scenes": [
+                {"description": f"scene {i}", "text": f"Google value {i}", "duration": 6}
+                for i in range(5)
+            ],
+            "narration": "Google helps people and businesses get things done.",
+            "music_suggestion": "upbeat",
+        }
+
+    def fake_images(descriptions, output_dir, **kwargs):
+        paths = []
+        for i, _ in enumerate(descriptions):
+            p = Path(output_dir) / f"scene_{i:02d}.png"
+            p.write_bytes(b"png")
+            paths.append(str(p))
+        return paths
+
+    def fake_voice(_text, output_dir, **kwargs):
+        p = Path(output_dir) / "voice.wav"
+        p.write_bytes(b"wav")
+        return str(p)
+
+    def fake_music(_duration, output_dir, _mood, **kwargs):
+        p = Path(output_dir) / "music.mp3"
+        p.write_bytes(b"mp3")
+        return str(p)
+
+    def fake_mix(_voice, _music, output_path, _gain=-18):
+        p = Path(output_path)
+        p.write_bytes(b"wavmix")
+        return str(p)
+
+    def fake_video(structured_scenes=None, voice_path=None, music_path=None, script=None, **kwargs):
+        _ = structured_scenes
+        _ = voice_path
+        output_dir = kwargs.get("output_dir", ".")
+        p = Path(output_dir) / "final_ad.mp4"
+        p.write_bytes(b"mp4")
+        return str(p)
+
+    monkeypatch.setattr(jobs, "scrape_business_url", fake_scrape)
+    monkeypatch.setattr(jobs, "generate_ad_script", fake_script)
+    monkeypatch.setattr(jobs, "generate_scene_images", fake_images)
+    monkeypatch.setattr(jobs, "generate_voiceover", fake_voice)
+    monkeypatch.setattr(jobs, "generate_background_music", fake_music)
+    monkeypatch.setattr(jobs, "mix_voice_with_music", fake_mix)
+    monkeypatch.setattr(jobs, "assemble_video", fake_video)
+    monkeypatch.setattr(jobs, "upload_video_return_url", lambda *_: "http://minio.local/google_ad.mp4")
+
+    client = TestClient(main.app)
+
+    auth_response = client.post(
+        "/api/auth/register",
+        json={
+            "full_name": "Flow User",
+            "email": "flow-user@example.com",
+            "password": "strong-password",
+        },
+    )
+    assert auth_response.status_code == 200, auth_response.text
+    access_token = auth_response.json()["access_token"]
+
+    generate_response = client.post(
+        "/api/generate-ad",
+        json={
+            "url": "https://www.google.com",
+            "user_id": "flow-user",
+            "voice_backend": "chatterbox",
+        },
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
+    assert generate_response.status_code == 200, generate_response.text
+    payload = generate_response.json()
+
+    job_id = payload["job_id"]
+    campaign_id = payload["campaign_id"]
+
+    status_response = client.get(f"/api/job-status/{job_id}")
+    assert status_response.status_code == 200
+    status_payload = status_response.json()
+    assert status_payload["status"] in {"finished", "complete", "success"}
+    assert status_payload["progress"]["stage"] == "done"
+    assert any(log["stage"] == "analyzing" for log in status_payload["logs"])
+    assert any(log["stage"] == "done" and log["status"] == "success" for log in status_payload["logs"])
+
+    campaign_response = client.get(f"/api/campaign/{campaign_id}")
+    assert campaign_response.status_code == 200
+    campaign_payload = campaign_response.json()
+
+    assert campaign_payload["status"] == "done"
+    assert campaign_payload["brand_data"]["company_name"] == "General Business"
+    assert campaign_payload["video_url"] == "http://minio.local/google_ad.mp4"
+    assert len(campaign_payload["script"]["scenes"]) == 5
+
+    db = SessionLocal()
+    campaign = db.query(Campaign).filter(Campaign.id == campaign_id).first()
+    from models import Video
+    video = db.query(Video).filter(Video.campaign_id == campaign_id).first()
+    db.close()
+
+    assert campaign is not None
+    assert campaign.status == "done"
+    assert video is not None
+    assert video.url == "http://minio.local/google_ad.mp4"
