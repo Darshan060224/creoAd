@@ -32,34 +32,35 @@ export default function VideoResult({ videoUrl, jobId, campaignId, onNewAd }: Pr
 
   return (
     <div style={{
-      background: "#fff",
-      border: "1.5px solid #0a0a0a",
+      background: "var(--surface)",
+      border: "1px solid var(--border)",
       borderRadius: 14,
       overflow: "hidden",
-      boxShadow: "3px 3px 0 #0a0a0a",
+      boxShadow: "none",
       maxWidth: 780
     }}>
 
       {/* Header */}
       <div style={{
         padding: "14px 20px",
-        borderBottom: "1px solid #e8e6e0",
+        borderBottom: "1px solid var(--border)",
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",
-        background: "#f5f5f3"
+        background: "rgba(255, 255, 255, 0.03)"
       }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <div style={{
             width: 28, height: 28,
-            background: "#dcfce7",
+            background: "rgba(22, 163, 74, 0.2)",
+            color: "#4ade80",
             borderRadius: "50%",
             display: "flex", alignItems: "center", justifyContent: "center",
             fontSize: 14
           }}>✓</div>
           <div>
             <div style={{
-              fontSize: 14, fontWeight: 700, color: "#0a0a0a",
+              fontSize: 14, fontWeight: 700, color: "var(--text)",
               fontFamily: "DM Mono, monospace"
             }}>
               AD READY

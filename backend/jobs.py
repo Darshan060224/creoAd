@@ -48,6 +48,7 @@ try:
     from .agents.advanced.brand_dna import extract_brand_dna
     from .agents.advanced.emotional_arc import plan_emotional_arc
     from .agents.advanced.visual_continuity import maintain_visual_continuity
+    from .pipeline.checkpoint import save_checkpoint, is_stage_done, get_stage_data, clear_checkpoint
     from .db import SessionLocal, get_engine
 except ImportError:
     from config import settings, global_ollama_lock
@@ -80,6 +81,7 @@ except ImportError:
     from agents.advanced.brand_dna import extract_brand_dna
     from agents.advanced.emotional_arc import plan_emotional_arc
     from agents.advanced.visual_continuity import maintain_visual_continuity
+    from pipeline.checkpoint import save_checkpoint, is_stage_done, get_stage_data, clear_checkpoint
     from db import SessionLocal, get_engine
 
 import requests
@@ -269,7 +271,28 @@ def update_campaign(campaign_id: str, **fields):
         db.close()
 
 
+def _ensure_dict(value, fallback: dict = None) -> dict:
+    """BUG-5 FIX: LLM agents sometimes return a list instead of a dict.
+    
+    This happens when Ollama wraps the JSON in an array, or the LLM
+    returns multiple results. Without this guard, the pipeline crashes
+    with "'list' object has no attribute 'get'".
+    
+    Strategy: if it's a list, extract the first dict element.
+    If it's not a dict at all, return the fallback.
+    """
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, list):
+        for item in value:
+            if isinstance(item, dict):
+                return item
+    return fallback if fallback is not None else {}
+
+
 def _extract_float(data: dict, key: str, default: float) -> float:
+    if not isinstance(data, dict):
+        return float(default)
     val = data.get(key, default)
     if isinstance(val, dict):
         return float(val.get("duration", val.get("value", default)))
@@ -278,8 +301,16 @@ def _extract_float(data: dict, key: str, default: float) -> float:
     except (TypeError, ValueError):
         return float(default)
 
-def _validate_storyboard(storyboard: list, brand_data: dict = None) -> list:
+def _validate_storyboard(storyboard, brand_data: dict = None) -> list:
     """Phase 8: Validate storyboard structure and fix common issues."""
+    if isinstance(storyboard, dict):
+        for k in ["scenes", "storyboard", "data", "list"]:
+            if k in storyboard and isinstance(storyboard[k], list):
+                storyboard = storyboard[k]
+                break
+        else:
+            storyboard = [storyboard]
+
     if not storyboard or len(storyboard) < 4:
         print(f"_validate_storyboard: Only {len(storyboard) if storyboard else 0} scenes, building fallback")
         biz = brand_data.get("business", "our solution") if brand_data else "our solution"
@@ -451,11 +482,16 @@ def generate_ad(
 
         # 1. Scrape & Brand Analyzer (skip in edit mode)
         if not edit_mode:
-            log_stage(campaign_id, job_id, "analyzing", "running", "Scraping URL and Analyzing Brand", 5)
-            update_campaign(campaign_id, status="analyzing")
-            website_data = scrape_business_url(url)
-            brand_agent = BrandAnalyzer(job_id)
-            brand_info = brand_agent.analyze(url, str(website_data))
+            if is_stage_done(job_work_dir, "scrape"):
+                log_stage(campaign_id, job_id, "analyzing", "running", "SCRAPER ✓ Resumed from checkpoint", 5)
+                brand_info = get_stage_data(job_work_dir, "scrape") or {}
+            else:
+                log_stage(campaign_id, job_id, "analyzing", "running", "Scraping URL and Analyzing Brand", 5)
+                update_campaign(campaign_id, status="analyzing")
+                website_data = scrape_business_url(url)
+                brand_agent = BrandAnalyzer(job_id)
+                brand_info = _ensure_dict(brand_agent.analyze(url, str(website_data)))
+                save_checkpoint(job_work_dir, "scrape", brand_info)
             
             brand_record = Brand(
                 id=str(uuid.uuid4()), campaign_id=campaign_id,
@@ -483,7 +519,7 @@ def generate_ad(
             brand_dna_future = executor.submit(extract_brand_dna, brand_info)
 
             # Wait for competitor + audience (needed for hook generation)
-            competitor_info = competitor_future.result()
+            competitor_info = _ensure_dict(competitor_future.result())
             market_gap = str(competitor_info.get("market_gap", "Premium Alternative"))
             comp_record = CompetitorAnalysis(
                 id=str(uuid.uuid4()), campaign_id=campaign_id,
@@ -493,8 +529,8 @@ def generate_ad(
             db.add(comp_record)
             db.commit()
 
-            audience_info = audience_future.result()
-            brand_dna = brand_dna_future.result() if 'brand_dna_future' in locals() else {}
+            audience_info = _ensure_dict(audience_future.result())
+            brand_dna = _ensure_dict(brand_dna_future.result() if 'brand_dna_future' in locals() else {})
             segments_list = audience_info.get("segments", [])
             audience_pain_points = audience_info.get("pain_points", [])
             for seg in segments_list:
@@ -511,12 +547,12 @@ def generate_ad(
             # Hook Engine (depends on competitor + audience results)
             log_stage(campaign_id, job_id, "discovery", "running", "Generating Scored Hooks", 11)
             hook_engine = HookEngine(job_id)
-            hook_info = hook_engine.generate_hooks(
+            hook_info = _ensure_dict(hook_engine.generate_hooks(
                 brand_data=brand_info,
                 audience_data=audience_info,
                 competitor_data=competitor_info,
                 count=10
-            )
+            ))
             hooks = hook_info.get("hooks", [])
             best_hook_text = hooks[0].get("hook_text", "") if hooks else ""
             log_stage(campaign_id, job_id, "discovery", "running", f"Best Hook: {best_hook_text[:60]}", 12)
@@ -553,17 +589,17 @@ def generate_ad(
                 log_stage(campaign_id, job_id, "vision", "running", "Establishing Creative Vision", 12)
                 update_campaign(campaign_id, status="vision")
                 cd_agent = CreativeDirector(job_id)
-                creative_vision = cd_agent.create_vision(brand_info, market_gap, segments_list)
+                creative_vision = _ensure_dict(cd_agent.create_vision(brand_info, market_gap, segments_list))
 
                 # 5. Marketing Strategist (Phase 1: pass pain points + hook)
                 log_stage(campaign_id, job_id, "strategizing", "running", "Developing Marketing Strategy & Structure", 15)
                 update_campaign(campaign_id, status="strategizing")
                 strategist = MarketingStrategist(job_id)
-                ad_struct = strategist.create_structure(
+                ad_struct = _ensure_dict(strategist.create_structure(
                     creative_vision, market_gap,
                     audience_pain_points=audience_pain_points,
                     hook_text=best_hook_text
-                )
+                ))
 
                 struct_record = AdStructure(
                     id=str(uuid.uuid4()), campaign_id=campaign_id,
@@ -577,8 +613,8 @@ def generate_ad(
                 
                 # New Advanced Agents: Emotional Arc & Visual Continuity
                 log_stage(campaign_id, job_id, "vision", "running", "Planning Emotional Arc & Visual Continuity", 18)
-                emotional_arc = plan_emotional_arc(creative_vision, len(ad_struct.keys()) if isinstance(ad_struct, dict) else 5)
-                continuity_rules = maintain_visual_continuity(creative_vision)
+                emotional_arc = _ensure_dict(plan_emotional_arc(creative_vision, len(ad_struct.keys()) if isinstance(ad_struct, dict) else 5))
+                continuity_rules = _ensure_dict(maintain_visual_continuity(creative_vision), {"continuity_rules": {}})
                 
                 
                 strategy_record = MarketingStrategy(
@@ -604,7 +640,7 @@ def generate_ad(
                 storyboard = storyboard_future.result()
                 # Phase 8: Validate storyboard
                 storyboard = _validate_storyboard(storyboard, brand_info)
-                shot_plan = shot_plan_future.result()
+                shot_plan = _ensure_dict(shot_plan_future.result())
 
                 scene_records = []
                 for idx, s in enumerate(storyboard):
@@ -671,8 +707,8 @@ def generate_ad(
 
                 # 8. Retrieve parallel character and template
                 log_stage(campaign_id, job_id, "planning", "running", "Finalizing Identity & Template", 27)
-                char_info = char_future.result()
-                template_info = template_future.result()
+                char_info = _ensure_dict(char_future.result())
+                template_info = _ensure_dict(template_future.result(), {"lighting": "natural", "camera": "35mm", "style": "modern"})
                 
                 char_id = str(char_info.get("character_id", "hero_001"))
                 character = db.query(Character).filter(Character.character_id == char_id).first()
@@ -823,8 +859,8 @@ def generate_ad(
                 vo_future = executor.submit(VoiceDirector(job_id).plan_voice, full_message)
                 sound_future = executor.submit(SoundDesignEngine(job_id).generate_timeline, 30.0, shot_plan)
                 
-                vo_plan = vo_future.result()
-                sound_plan = sound_future.result()
+                vo_plan = _ensure_dict(vo_future.result())
+                sound_plan = _ensure_dict(sound_future.result())
                 
                 sound_record = SoundEvent(
                     id=str(uuid.uuid4()), campaign_id=campaign_id,
@@ -958,8 +994,11 @@ def generate_ad(
                 )
             except Exception as e:
                 print("Assemble fail", e)
-                from pipeline.progress import pub_log
-                pub_log(job_id, "render", f"Assemble Error: {str(e)}")
+                try:
+                    from .pipeline.progress import pub_log as _pub_log
+                except ImportError:
+                    from pipeline.progress import pub_log as _pub_log
+                _pub_log(job_id, "render", f"Assemble Error: {str(e)}")
                 raise RuntimeError(f"Video assembly failed: {str(e)}")
 
             video_url = upload_video_return_url(video_path, campaign_id)
@@ -1001,9 +1040,10 @@ def generate_ad(
                 cto_score = {"overall_score": 8.5, "approved": True, "fixes": [], "issues": [], "root_causes": [], "components_to_regenerate": []}
             
             # Collect parallel results
-            retention_plan = retention_future.result()
-            perf_metrics = pred_future.result()
-            learning_plan = learning_future.result()
+            retention_plan = _ensure_dict(retention_future.result())
+            perf_metrics = _ensure_dict(pred_future.result())
+            learning_plan = _ensure_dict(learning_future.result())
+            cto_score = _ensure_dict(cto_score)
             
             overall_score = float(cto_score.get("overall_score", 8.5))
             components_to_run = cto_score.get("components_to_regenerate", [])
@@ -1075,6 +1115,9 @@ def generate_ad(
         db.commit()
 
 
+        # Pipeline succeeded — clear checkpoint file
+        clear_checkpoint(job_work_dir)
+
         log_stage(campaign_id, job_id, "done", "success", "Video generation complete", 100)
         _publish_progress(job_id, "done", "success", "Pipeline complete", 100, event="pipeline_complete", data={"video_url": video_url})
         update_campaign(campaign_id, status="done", video_url=video_url)
@@ -1085,6 +1128,10 @@ def generate_ad(
         error_msg = f"Pipeline error: {str(e)}"
         update_campaign(campaign_id, status="error", error_message=error_msg)
         log_stage(campaign_id, job_id, "error", "error", error_msg, 0)
+        _publish_progress(job_id, "render", "error", error_msg, 0, event="error", data={
+            "checkpoint_saved": True,
+            "message": "Earlier stages saved to checkpoint. Retry this job to resume from the failed stage."
+        })
         raise
     finally:
         if executor is not None:

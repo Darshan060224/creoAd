@@ -92,6 +92,49 @@ def resolve_ollama_model() -> str:
     return result
 
 
+def _sanitize_json_string(text: str) -> str:
+    """Sanitize common LLM JSON formatting issues before json.loads().
+    
+    Ollama models frequently return JSON with:
+    - Trailing commas before } or ]
+    - Single-quoted strings instead of double-quotes  
+    - JavaScript-style comments (// or /* */)
+    - Unescaped newlines inside string values
+    - Property names without quotes
+    - Control characters
+    """
+    if not text:
+        return text
+    
+    # 1. Remove JavaScript-style comments
+    text = re.sub(r'//[^\n]*', '', text)
+    text = re.sub(r'/\*.*?\*/', '', text, flags=re.DOTALL)
+    
+    # 2. Remove control characters except newline and tab
+    text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', text)
+    
+    # 3. Remove trailing commas before } or ]
+    text = re.sub(r',\s*}', '}', text)
+    text = re.sub(r',\s*]', ']', text)
+    
+    # 4. Fix single-quoted strings to double-quoted
+    # Only do this if the text doesn't already parse as valid JSON
+    try:
+        json.loads(text)
+        return text  # Already valid, don't touch it
+    except json.JSONDecodeError:
+        pass
+    
+    # 5. Try fixing unquoted property names (e.g., {name: "value"} -> {"name": "value"})
+    text = re.sub(r'(?<=[{,])\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r' "\1":', text)
+    
+    # 6. Remove trailing commas again (step 5 might have shifted things)
+    text = re.sub(r',\s*}', '}', text)
+    text = re.sub(r',\s*]', ']', text)
+    
+    return text
+
+
 def _parse_json_from_llm(text: str) -> Union[Dict[str, Any], List[Any]]:
     json_match = re.search(r"\[.*\]|\{.*\}", text, re.DOTALL)
     candidate = json_match.group(0) if json_match else None
@@ -118,17 +161,23 @@ def _parse_json_from_llm(text: str) -> Union[Dict[str, Any], List[Any]]:
     if not candidate:
         raise Exception("No JSON found in response")
 
+    # Apply robust sanitization before parsing
+    candidate = _sanitize_json_string(candidate)
+
     try:
         return json.loads(candidate)
     except json.JSONDecodeError as e:
-        print(f"JSONDecodeError on candidate: {candidate}")
-        cleaned = re.sub(r",\s*\}", "}", candidate)
-        cleaned = re.sub(r",\s*\]", "]", cleaned)
-        try:
-            return json.loads(cleaned)
-        except json.JSONDecodeError:
-            print(f"Failed to decode even after cleaning: {cleaned}")
-            raise Exception(f"Invalid JSON in response: {str(e)}")
+        # Second attempt: more aggressive cleanup
+        cleaned = _sanitize_json_string(candidate)
+        # Also try replacing single quotes with double quotes as last resort
+        cleaned_sq = re.sub(r"(?<![\\])'", '"', cleaned)
+        for attempt_str in [cleaned, cleaned_sq]:
+            try:
+                return json.loads(attempt_str)
+            except json.JSONDecodeError:
+                continue
+        print(f"JSONDecodeError on candidate: {candidate[:200]}")
+        raise Exception(f"Invalid JSON in response: {str(e)}")
 
 
 class LLMAgent:
@@ -909,12 +958,32 @@ class PromptEngineer(LLMAgent):
             print(f"PromptEngineer fallback due to: {e}")
             base = char_prompt_fragment or "professional person in commercial setting"
             brand = brand_prompt_fragment or "cinematic lighting, 8k, photorealistic"
-            return [
-                {
-                    "prompt": f"same person as reference image, {base}, {brand}, commercial quality, highly detailed photorealistic commercial shot."
-                }
-                for _ in range(10)
-            ]
+            # Build scene-specific fallback prompts instead of identical ones
+            scene_purposes = {
+                "hook": "dramatic close-up, subject looking directly at camera, bold confident expression",
+                "problem": "medium shot showing frustration, desaturated cool tones, subject in challenging situation",
+                "solution": "bright optimistic lighting, product reveal moment, subject smiling with relief",
+                "proof": "wide shot with warm tones, social proof setting, multiple satisfied people",
+                "cta": "product hero shot, clean background, brand colors prominent, call to action",
+            }
+            fallback_prompts = []
+            scenes = shot_plan.get("scenes", []) if isinstance(shot_plan, dict) else []
+            num = max(len(scenes), 5)
+            purpose_cycle = ["hook", "problem", "solution", "proof", "cta"]
+            for i in range(num):
+                purpose = "scene"
+                camera = "wide"
+                if i < len(scenes):
+                    purpose = scenes[i].get("scene", purpose_cycle[i % len(purpose_cycle)])
+                    shots_in_scene = scenes[i].get("shots", [{}])
+                    camera = shots_in_scene[0].get("camera", "wide") if shots_in_scene else "wide"
+                elif i < len(purpose_cycle):
+                    purpose = purpose_cycle[i]
+                scene_desc = scene_purposes.get(purpose, f"scene {i+1}, cinematic commercial shot")
+                fallback_prompts.append({
+                    "prompt": f"same person as reference image, {base}, {scene_desc}, {camera} shot, {brand}, commercial quality, highly detailed photorealistic"
+                })
+            return fallback_prompts
 
 
 class ImageReviewer(LLMAgent):

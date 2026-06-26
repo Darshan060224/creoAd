@@ -98,28 +98,28 @@ export default function AnalyticsPage() {
   return (
     <PageShell title="Analytics" subtitle="See campaign throughput, reliability, and recent activity.">
       {loading ? (
-        <div style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: 20, padding: 40, textAlign: 'center' }}>
+        <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 20, padding: 40, textAlign: 'center' }}>
           Loading analytics metrics...
         </div>
       ) : (
         <>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 16, marginBottom: 20 }}>
             {stats.map((item) => (
-              <div key={item.label} style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: 18, padding: 18 }}>
-                <div style={{ color: '#666', fontSize: 13 }}>{item.label}</div>
+              <div key={item.label} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 18, padding: 18 }}>
+                <div style={{ color: 'var(--muted)', fontSize: 13 }}>{item.label}</div>
                 <div style={{ fontSize: 28, fontWeight: 900, marginTop: 6 }}>{item.value}</div>
               </div>
             ))}
           </div>
 
-          <div style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: 20, padding: 20, marginBottom: 20 }}>
+          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 20, padding: 20, marginBottom: 20 }}>
             <h3 style={{ marginTop: 0, marginBottom: 20 }}>Ads per day (Last 7 Days)</h3>
             <div style={{ position: 'relative', height: 220 }}>
               <svg viewBox="0 0 600 220" width="100%" height="220" role="img" aria-label="Ads per day chart">
                 {/* Grid Lines */}
-                <line x1="40" y1="50" x2="560" y2="50" stroke="#f0f0ee" strokeWidth="1" />
-                <line x1="40" y1="115" x2="560" y2="115" stroke="#f0f0ee" strokeWidth="1" />
-                <line x1="40" y1="180" x2="560" y2="180" stroke="#e0e0dc" strokeWidth="1.5" />
+                <line x1="40" y1="50" x2="560" y2="50" stroke="rgba(255, 255, 255, 0.08)" strokeWidth="1" />
+                <line x1="40" y1="115" x2="560" y2="115" stroke="rgba(255, 255, 255, 0.08)" strokeWidth="1" />
+                <line x1="40" y1="180" x2="560" y2="180" stroke="rgba(255, 255, 255, 0.18)" strokeWidth="1.5" />
 
                 {/* Line graph */}
                 {chartData.points.length > 0 && (
@@ -134,7 +134,7 @@ export default function AnalyticsPage() {
                             {p.count > 0 ? p.count : ''}
                           </text>
                           {/* Date label at bottom */}
-                          <text x={p.x} y="200" textAnchor="middle" fontSize="11" fontWeight="700" fill="#666">
+                          <text x={p.x} y="200" textAnchor="middle" fontSize="11" fontWeight="700" fill="var(--muted)">
                             {p.label}
                           </text>
                         </g>
@@ -146,15 +146,15 @@ export default function AnalyticsPage() {
             </div>
           </div>
 
-          <div style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: 20, padding: 20 }}>
+          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 20, padding: 20 }}>
             <h3 style={{ marginTop: 0, marginBottom: 15 }}>Recent jobs</h3>
             {ads.length === 0 ? (
-              <div style={{ padding: '20px 0', color: '#666', textAlign: 'center' }}>No campaigns found.</div>
+              <div style={{ padding: '20px 0', color: 'var(--muted)', textAlign: 'center' }}>No campaigns found.</div>
             ) : (
               <div style={{ overflowX: 'auto' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
-                    <tr style={{ textAlign: 'left', color: '#555', fontSize: 13, borderBottom: '1.5px solid var(--border)' }}>
+                    <tr style={{ textAlign: 'left', color: 'var(--muted)', fontSize: 13, borderBottom: '1.5px solid var(--border)' }}>
                       <th style={{ padding: '10px 8px' }}>Campaign / URL</th>
                       <th style={{ padding: '10px 8px' }}>Created</th>
                       <th style={{ padding: '10px 8px' }}>Duration</th>
@@ -180,12 +180,12 @@ export default function AnalyticsPage() {
                         <tr key={ad.campaign_id} style={{ borderBottom: '1px solid var(--border)' }}>
                           <td style={{ padding: '14px 8px', fontWeight: 700 }}>
                             <div style={{ fontSize: 14 }}>{ad.business_url}</div>
-                            <div style={{ fontSize: 11, color: '#888', marginTop: 2, fontFamily: 'DM Mono, monospace' }}>ID: {ad.campaign_id}</div>
+                            <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2, fontFamily: 'DM Mono, monospace' }}>ID: {ad.campaign_id}</div>
                           </td>
-                          <td style={{ padding: '14px 8px', fontSize: 13, color: '#555' }}>
+                          <td style={{ padding: '14px 8px', fontSize: 13, color: 'var(--sub)' }}>
                             {ad.created_at ? new Date(ad.created_at).toLocaleString() : 'N/A'}
                           </td>
-                          <td style={{ padding: '14px 8px', fontSize: 13, color: '#555' }}>
+                          <td style={{ padding: '14px 8px', fontSize: 13, color: 'var(--sub)' }}>
                             {durationStr}
                           </td>
                           <td style={{ padding: '14px 8px' }}>
@@ -195,8 +195,8 @@ export default function AnalyticsPage() {
                               fontSize: 11,
                               fontWeight: 800,
                               textTransform: 'uppercase',
-                              background: isComplete ? '#dcfce7' : isErr ? '#fee2e2' : '#fef3c7',
-                              color: isComplete ? '#16a34a' : isErr ? '#dc2626' : '#d97706'
+                              background: isComplete ? 'rgba(22, 163, 74, 0.2)' : isErr ? 'rgba(220, 38, 38, 0.2)' : 'rgba(217, 119, 6, 0.2)',
+                              color: isComplete ? '#4ade80' : isErr ? '#f87171' : '#fbbf24'
                             }}>
                               {ad.status}
                             </span>

@@ -1,6 +1,7 @@
 """
 AD CRUD endpoints: generate, list, get, edit, delete
 """
+import os
 from fastapi import APIRouter, HTTPException, Depends, Request
 from sqlalchemy.orm import Session
 import uuid
@@ -291,6 +292,103 @@ async def edit_and_render(
         "message": "Video re-rendering started",
         "status": "rendering"
     }
+
+@router.post("/{campaign_id}/retry")
+async def retry_campaign(
+    campaign_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Re-enqueue a failed job. Checkpoint system will skip completed stages
+    and resume directly from the stage that failed.
+    """
+    campaign = db.query(Campaign).filter(Campaign.id == campaign_id).first()
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    if campaign.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    campaign.status = "queued"
+    campaign.error_message = None
+    db.commit()
+
+    try:
+        rq_job = q.enqueue(
+            generate_ad,
+            campaign_id=campaign_id,
+            url=campaign.business_url,
+            job_timeout=3600,
+            result_ttl=86400,
+        )
+        campaign.job_id = rq_job.id
+        db.commit()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Retry enqueue failed: {str(e)}")
+
+    return {
+        "job_id": rq_job.id,
+        "campaign_id": campaign_id,
+        "status": "requeued",
+        "resumed_from_checkpoint": True,
+        "message": "Job re-queued. Completed stages will be skipped automatically."
+    }
+
+
+@router.get("/{campaign_id}/scenes")
+async def get_campaign_scenes(
+    campaign_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Return generated scene image URLs for the gallery view.
+    Works even if the final render failed.
+    """
+    import glob
+
+    campaign = db.query(Campaign).filter(Campaign.id == campaign_id).first()
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    if campaign.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    # Check both possible output directories
+    _JOB_WORK_ROOT = os.environ.get("CREOAD_JOB_WORK_DIR", "/tmp/creoAd_jobs")
+    safe_id = os.path.basename(str(campaign_id))
+    img_dir = os.path.join(_JOB_WORK_ROOT, safe_id)
+
+    scenes = []
+    if os.path.exists(img_dir):
+        files = sorted(glob.glob(os.path.join(img_dir, "scene_*.png")))
+        for i, f in enumerate(files):
+            scenes.append({
+                "index": i,
+                "imageUrl": f"/output/{safe_id}/{os.path.basename(f)}",
+                "filename": os.path.basename(f),
+                "status": "done",
+            })
+
+    # Also check DB for image records
+    if not scenes:
+        try:
+            from ..models import Image as ImageModel
+        except ImportError:
+            from models import Image as ImageModel
+
+        images = db.query(ImageModel).filter(
+            ImageModel.campaign_id == campaign_id
+        ).all()
+        for i, img in enumerate(images):
+            if img.url:
+                scenes.append({
+                    "index": i,
+                    "imageUrl": img.url,
+                    "status": "done",
+                })
+
+    return {"scenes": scenes, "total": len(scenes)}
+
 
 @router.delete("/{campaign_id}")
 async def delete_campaign(

@@ -230,6 +230,48 @@ Video Length: 30 seconds
 
     return prompt
 
+def _sanitize_json_string(text: str) -> str:
+    """Sanitize common LLM JSON formatting issues before json.loads().
+    
+    Ollama models frequently return JSON with:
+    - Trailing commas before } or ]
+    - JavaScript-style comments (// or /* */)
+    - Unescaped newlines inside string values
+    - Property names without quotes
+    - Control characters
+    """
+    if not text:
+        return text
+    
+    # 1. Remove JavaScript-style comments
+    text = re.sub(r'//[^\n]*', '', text)
+    text = re.sub(r'/\*.*?\*/', '', text, flags=re.DOTALL)
+    
+    # 2. Remove control characters except newline and tab
+    text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', text)
+    
+    # 3. Remove trailing commas before } or ]
+    text = re.sub(r',\s*}', '}', text)
+    text = re.sub(r',\s*]', ']', text)
+    
+    # 4. Fix single-quoted strings to double-quoted
+    # Only do this if the text doesn't already parse as valid JSON
+    try:
+        json.loads(text)
+        return text  # Already valid, don't touch it
+    except json.JSONDecodeError:
+        pass
+    
+    # 5. Try fixing unquoted property names (e.g., {name: "value"} -> {"name": "value"})
+    text = re.sub(r'(?<=[{,])\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r' "\1":', text)
+    
+    # 6. Remove trailing commas again (step 5 might have shifted things)
+    text = re.sub(r',\s*}', '}', text)
+    text = re.sub(r',\s*]', ']', text)
+    
+    return text
+
+
 def parse_script_response(raw_response: str) -> Dict[str, Any]:
     """Parse Ollama response and extract JSON
 
@@ -267,16 +309,25 @@ def parse_script_response(raw_response: str) -> Dict[str, Any]:
     if not candidate:
         raise Exception("No JSON found in response")
 
-    # Try to decode the candidate JSON; if it fails, raise a helpful error
+    # Apply robust sanitization before parsing
+    candidate = _sanitize_json_string(candidate)
+
+    # Try to decode the candidate JSON; if it fails, try more aggressive cleanup
     try:
         script = json.loads(candidate)
     except json.JSONDecodeError as e:
-        # Attempt a small cleanup pass: remove trailing commas and control characters
-        cleaned = re.sub(r",\s*\}", "}", candidate)
-        cleaned = re.sub(r",\s*\]", "]", cleaned)
-        try:
-            script = json.loads(cleaned)
-        except json.JSONDecodeError:
+        # Second attempt: more aggressive cleanup
+        cleaned = _sanitize_json_string(candidate)
+        # Also try replacing single quotes with double quotes as last resort
+        cleaned_sq = re.sub(r"(?<![\\])'", '"', cleaned)
+        script = None
+        for attempt_str in [cleaned, cleaned_sq]:
+            try:
+                script = json.loads(attempt_str)
+                break
+            except json.JSONDecodeError:
+                continue
+        if script is None:
             raise Exception(f"Invalid JSON in response: {str(e)}")
 
     # Validate structure

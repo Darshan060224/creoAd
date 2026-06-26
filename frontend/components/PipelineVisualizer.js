@@ -53,6 +53,7 @@ function normalizePct(value, fallback = 0) {
 export default function PipelineVisualizer({ jobId, url = 'example.com', apiUrl = null, onComplete = null }) {
   const [modelConfig, setModelConfig] = useState({ ollama_model: 'llama3.2:3b', comfyui_checkpoint: 'sdxl_turbo_fp16.safetensors' })
   const [estimates, setEstimates] = useState({ total: 150 })
+  const [selectedImage, setSelectedImage] = useState(null)
   const [stages, setStages] = useState([
 
     { id: 'scrape', status: 'wait', pct: 0, logs: [], time: null },
@@ -282,7 +283,17 @@ export default function PipelineVisualizer({ jobId, url = 'example.com', apiUrl 
                       const done = (s.scenes_done || []).includes(idx)
                       const active = !done && s.pct > (idx * 100 / (s.scenes_total || 5)) && s.status === 'active'
                       return (
-                        <div key={idx} className={`${styles['scene-box']} ${done ? styles['sb-done-bg'] : active ? styles['sb-active-bg'] : styles['sb-wait-bg']}`}>
+                        <div 
+                          key={idx} 
+                          className={`${styles['scene-box']} ${done ? styles['sb-done-bg'] : active ? styles['sb-active-bg'] : styles['sb-wait-bg']}`}
+                          style={{ cursor: done ? 'pointer' : 'default' }}
+                          onClick={() => {
+                            if (done) {
+                              const API = apiUrl || (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000')
+                              setSelectedImage(`${API}/output/${jobId}/scene_${String(idx).padStart(2,'0')}.png`)
+                            }
+                          }}
+                        >
                           {done && <div className={styles['scene-check']}>✓</div>}
                           {!done && active && <span className={styles['spin-icon']}>⟳</span>}
                           <span className={styles['scene-label']}>SC {String(idx+1).padStart(2,'0')}</span>
@@ -316,9 +327,35 @@ export default function PipelineVisualizer({ jobId, url = 'example.com', apiUrl 
               ))}
             </div>
           </div>
-
         </div>
       </div>
+
+      {selectedImage && (
+        <div
+          onClick={() => setSelectedImage(null)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.85)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 9999,
+            cursor: 'zoom-out',
+          }}
+        >
+          <img
+            src={selectedImage}
+            alt="Generated Scene"
+            style={{
+              maxWidth: '90vw',
+              maxHeight: '90vh',
+              borderRadius: 8,
+              boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
+            }}
+          />
+        </div>
+      )}
     </div>
   )
 }

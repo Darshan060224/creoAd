@@ -101,16 +101,24 @@ def _detect_font() -> str:
 RESOLVED_FONT = _detect_font()
 
 def safe_text(text: str, max_len: int = 35) -> str:
-    """Remove all chars that break FFmpeg drawtext filter"""
+    """
+    Remove every character that can break FFmpeg's drawtext filter parser.
+    Must be called on EVERY string passed into any drawtext= filter.
+    """
     import re
     if not text:
         return ""
     text = str(text).replace("\n", " ")
-    text = re.sub(r"[`;&<>|{}()\[\]]", "", text)
-    text = text.replace("'", "\u2019").replace('"', '\u201C')
-    text = text.replace("&", "and").replace("@", "at").replace("%", "pct")
-    text = text.replace("\\", "")  # remove existing backslashes
-    text = text.replace(":", "\\:") # now escape colons safely
+    # 1. Remove ALL quote variants (single, double, smart, backtick)
+    text = re.sub(r"""['\"``\u2018\u2019\u201C\u201D]""", "", text)
+    # 2. Remove shell/filter-breaking characters
+    text = re.sub(r"[;,&<>|\\{}()\[\]=\$]", "", text)
+    # 3. Replace special symbols with words
+    text = text.replace("@", "at").replace("%", "pct")
+    # 4. Escape colons (FFmpeg drawtext key=value separator) LAST
+    text = text.replace(":", "\\:")
+    # 5. Collapse multiple spaces
+    text = re.sub(r"\s+", " ", text)
     return text[:max_len].strip()
 
 
@@ -212,7 +220,7 @@ def assemble_video(structured_scenes=None, voice_path=None, music_path=None,
         except ImportError:
             pass
         except Exception as e:
-            if os.getenv("ALLOW_KEN_BURNS_FALLBACK", "False").lower() != "true":
+            if os.getenv("REQUIRE_AI_VIDEO", "false").lower() == "true":
                 pub_log(job_id, "render", f"VideoGen ✗ AI Video failed: {e}")
                 raise RuntimeError(f"AI Video Generation is strictly required but failed: {e}")
             else:
@@ -318,6 +326,7 @@ def assemble_video(structured_scenes=None, voice_path=None, music_path=None,
 
     cmd_final = [
         "ffmpeg", "-y",
+        "-v", "warning",
         *inputs,
         *af,
         *maps,
@@ -352,7 +361,42 @@ def assemble_video(structured_scenes=None, voice_path=None, music_path=None,
 
     if proc.returncode != 0:
         err = proc.stderr.read().decode()[-500:]
-        raise RuntimeError(f"FFmpeg failed: {err}")
+        # BUG-1c FIX: If the final render failed (likely due to broken text
+        # overlays or filter_complex), retry WITHOUT text overlays rather
+        # than crashing the entire pipeline.
+        if vf_final:
+            pub_log(job_id, "render",
+                f"FFMPEG Final render failed with text overlays, retrying without: {err[-100:]}")
+            af_retry, maps_retry = _build_audio_filter(
+                "", has_voice, has_music, has_sfx,
+                voice_idx, music_idx, sfx_idx, duration
+            )
+            cmd_retry = [
+                "ffmpeg", "-y",
+                "-v", "warning",
+                *inputs,
+                *af_retry,
+                *maps_retry,
+                "-c:v", "libx264",
+                "-pix_fmt", "yuv420p",
+                "-profile:v", "high" if fmt == "tv" else "main",
+                "-preset", settings.ffmpeg_preset,
+                "-b:v", spec["vb"],
+                "-r", str(fps),
+                "-t", str(duration),
+                "-c:a", "aac",
+                "-b:a", spec["ab"],
+                "-ar", str(spec["ar"]),
+                "-ac", "2",
+                "-movflags", "+faststart",
+                out_path
+            ]
+            result_retry = subprocess.run(cmd_retry, capture_output=True, timeout=900)
+            if result_retry.returncode != 0:
+                err2 = result_retry.stderr.decode()[-500:]
+                raise RuntimeError(f"FFmpeg failed (even without overlays): {err2}")
+        else:
+            raise RuntimeError(f"FFmpeg failed: {err}")
 
     size_kb = os.path.getsize(out_path) // 1024
     pub_log(job_id, "render",
@@ -363,12 +407,48 @@ def assemble_video(structured_scenes=None, voice_path=None, music_path=None,
     return out_path
 
 
+def _validate_filter_string(vf: str) -> str:
+    """Validate a video filter string before passing to FFmpeg.
+    
+    Returns the filter string if valid, or empty string if malformed.
+    This prevents FFmpeg from crashing with 'Invalid argument' (-22).
+    """
+    if not vf:
+        return ""
+    stripped = vf.strip()
+    if not stripped:
+        return ""
+    # Reject filters that start/end with separators
+    if stripped.startswith((",", ";", "=")) or stripped.endswith((",", ";", "=")):
+        return ""
+    # Reject filters with empty text= fields (drawtext=...text='':... crashes)
+    if "text=''" in stripped:
+        return ""
+    # Check for unbalanced single quotes (used in enable='...' and text='...')
+    if stripped.count("'") % 2 != 0:
+        return ""
+    # Check for unbalanced parentheses in the filter
+    depth = 0
+    for ch in stripped:
+        if ch == '(':
+            depth += 1
+        elif ch == ')':
+            depth -= 1
+        if depth < 0:
+            return ""  # More closing than opening parens
+    if depth != 0:
+        return ""  # Unclosed parentheses
+    return stripped
+
+
 def _build_audio_filter(vf_final, has_voice, has_music, has_sfx,
                         voice_idx, music_idx, sfx_idx, duration):
     """Build FFmpeg audio filter_complex and map arguments.
     
     Handles all combinations of voice, music, and SFX inputs.
     """
+    # Defensive: validate video filter string before injecting into filter_complex
+    vf_final = _validate_filter_string(vf_final)
     if has_voice and has_music and has_sfx:
         # All three: voice + music (ducked) + SFX
         sfx_vol = "volume=0.7"
@@ -449,13 +529,28 @@ def build_kinetic_typography(scenes, w, h, font_size):
     Phase 5 Enhanced: Purpose-aware animations, text shadow/outline,
     and scene-purpose-aware text placement.
     
+    CRITICAL: FFmpeg drawtext's `fontsize` parameter only accepts
+    integer constants, NOT expressions. Using if() there causes
+    error code -22 (Invalid argument) and zero frames written.
+    
     Animations by purpose:
-    - hook: Pop (scale 0→120%→100%), center-screen, large, with box background
+    - hook: Large text, center-screen, with box background
     - problem: Slide-in from left, top area, medium
     - solution: Fade-in center, medium  
-    - proof: Typewriter effect, bottom-center, smaller
+    - proof: Bottom-center, smaller
     - cta: Bounce vertically, center-bottom, gold, with box background
     """
+    try:
+        return _build_kinetic_typography_inner(scenes, w, h, font_size)
+    except Exception as e:
+        # NEVER let kinetic typography crash the pipeline
+        print(f"build_kinetic_typography failed (non-fatal, skipping overlays): {e}")
+        return ""
+
+
+def _build_kinetic_typography_inner(scenes, w, h, font_size):
+    """Inner implementation of kinetic typography. Separated so the outer
+    wrapper can catch any exception and return empty string."""
     filters = []
     current_time = 0.0
     
@@ -466,66 +561,69 @@ def build_kinetic_typography(scenes, w, h, font_size):
             purpose = scene.get("purpose", "scene")
             
             # Purpose-aware animation parameters
+            # NOTE: fontsize MUST be a plain integer — FFmpeg drawtext
+            # does NOT support expressions in fontsize and will crash
+            # with error code -22 (Invalid argument) if given one.
             if purpose == "hook":
-                # POP animation: scale up then settle, center-screen, large
-                size_expr = f"if(lt(t-{current_time}\\\\,0.3)\\\\, {int(font_size*1.3)}\\\\, {font_size})"
+                # Large text, center-screen, with box background
+                actual_size = int(font_size * 1.3)
                 x_expr = "(w-text_w)/2"
                 y_expr = "(h-text_h)/2"
                 color = "white"
                 use_box = True
-                actual_size = int(font_size * 1.2)
             elif purpose == "problem":
                 # SLIDE-IN from left
                 slide_dur = 0.5
-                size_expr = f"{font_size}"
-                x_expr = f"if(lt(t-{current_time}\\\\,{slide_dur})\\\\, -text_w + (w/2+text_w)*(t-{current_time})/{slide_dur}\\\\, (w-text_w)/2)"
+                actual_size = font_size
+                x_expr = f"if(lt(t-{current_time}\\\\,{slide_dur})\\\\,-text_w+(w/2+text_w)*(t-{current_time})/{slide_dur}\\\\,(w-text_w)/2)"
                 y_expr = "80"
                 color = "white"
                 use_box = False
-                actual_size = font_size
             elif purpose == "solution":
                 # FADE-IN at center
-                size_expr = f"{font_size}"
+                actual_size = font_size
                 x_expr = "(w-text_w)/2"
                 y_expr = "(h-text_h)/2"
                 color = "white"
                 use_box = False
-                actual_size = font_size
             elif purpose == "proof":
-                # TYPEWRITER: characters appear progressively
-                size_expr = f"{int(font_size * 0.85)}"
+                # Bottom-center, smaller
+                actual_size = int(font_size * 0.85)
                 x_expr = "(w-text_w)/2"
                 y_expr = "h-120"
                 color = "white"
                 use_box = False
-                actual_size = int(font_size * 0.85)
             elif purpose == "cta":
                 # BOUNCE animation: text bounces vertically, gold color
-                size_expr = f"{int(font_size * 1.1)}"
+                actual_size = int(font_size * 1.1)
                 x_expr = "(w-text_w)/2"
-                y_expr = f"h-100 - 15*abs(sin(5*(t-{current_time})))"
+                y_expr = f"h-100-15*abs(sin(5*(t-{current_time})))"
                 color = "0xFFD700"
                 use_box = True
-                actual_size = int(font_size * 1.1)
             else:
                 # Default: simple centered
-                size_expr = f"{font_size}"
+                actual_size = font_size
                 x_expr = "(w-text_w)/2"
                 y_expr = "80"
                 color = "white"
                 use_box = False
-                actual_size = font_size
 
             enable = f"between(t,{current_time},{current_time+duration_val})"
             
             # Shadow pass (deep black shadow offset by 4px for readability)
+            # For simple expressions (no operators), just append +4
+            # For complex expressions with operators, wrap in parens first
+            has_ops = any(c in x_expr for c in "(+-*/")
+            shadow_x = f"({x_expr})+4" if has_ops else f"{x_expr}+4"
+            has_ops_y = any(c in y_expr for c in "(+-*/")
+            shadow_y = f"({y_expr})+4" if has_ops_y else f"{y_expr}+4"
             shadow_f = (
                 f"drawtext="
                 f"{RESOLVED_FONT}"
                 f"text='{text}':"
                 f"fontsize={actual_size}:"
                 f"fontcolor=black@0.9:"
-                f"x={x_expr}+4:y={y_expr}+4:"
+                f"x={shadow_x}:y={shadow_y}:"
                 f"enable='{enable}'"
             )
             filters.append(shadow_f)
@@ -551,7 +649,9 @@ def build_kinetic_typography(scenes, w, h, font_size):
         
         current_time += duration_val
     
-    return ",".join(filters)
+    result = ",".join(filters)
+    # Final validation: if the resulting filter string is malformed, return empty
+    return _validate_filter_string(result)
 
 
 def _xfade_join(clips, output_dir, clip_durations, transitions_list):

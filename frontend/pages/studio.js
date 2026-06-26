@@ -4,6 +4,8 @@ import { useRouter } from 'next/router'
 import axios from 'axios'
 import GeneratorForm from '../components/GeneratorForm'
 import VideoResult from '../components/studio/VideoResult'
+import SceneGallery from '../components/studio/SceneGallery'
+import PipelineError from '../components/studio/PipelineError'
 import PipelineVisualizer from '../components/PipelineVisualizer'
 import ServiceHealth from '../components/ServiceHealth'
 import PageShell from '../components/layout/PageShell'
@@ -17,6 +19,7 @@ export default function Studio() {
   const [status, setStatus] = useState('idle')
   const [videoUrl, setVideoUrl] = useState(null)
   const [error, setError] = useState(null)
+  const [failedStage, setFailedStage] = useState(null)
   const [initialUrl, setInitialUrl] = useState('')
   const [voiceBackend, setVoiceBackend] = useState('chatterbox')
   const [voiceModel, setVoiceModel] = useState('tts_models/en/ljspeech/tacotron2-DDC')
@@ -149,11 +152,20 @@ export default function Studio() {
             <section className={styles.studioWorkspace}>
               <div className={styles.studioWorkspaceBody}>
                 {(status === 'generating' || status === 'polling') && jobId && (
-                  <PipelineVisualizer jobId={jobId} url={initialUrl || 'example.com'} apiUrl={API_URL} onComplete={(data) => {
-                    const vUrl = data.data?.video_url || data.data?.video_path || data.video_url || data.video_path
-                    handleJobComplete({ video_url: vUrl })
-                    setStatus('done')
-                  }} />
+                  <>
+                    <PipelineVisualizer jobId={jobId} url={initialUrl || 'example.com'} apiUrl={API_URL} onComplete={(data) => {
+                      const vUrl = data.data?.video_url || data.data?.video_path || data.video_url || data.video_path
+                      if (data.event === 'error') {
+                        setError(data.log || data.data?.message || 'Pipeline failed')
+                        setFailedStage(data.stage || data.data?.failed_stage || 'render')
+                        setStatus('error')
+                      } else {
+                        handleJobComplete({ video_url: vUrl })
+                        setStatus('done')
+                      }
+                    }} />
+                    {campaignId && <SceneGallery campaignId={campaignId} apiUrl={API_URL} />}
+                  </>
                 )}
                 {status === 'idle' && (
                   <GeneratorForm
@@ -168,25 +180,49 @@ export default function Studio() {
                 )}
 
                 {status === 'done' && videoUrl && (
-                  <VideoResult 
-                    videoUrl={videoUrl} 
-                    jobId={jobId} 
-                    campaignId={campaignId}
-                    onNewAd={() => {
-                      setStatus('idle')
-                      setVideoUrl(null)
-                      setJobId(null)
-                      setCampaignId(null)
-                    }} 
-                  />
+                  <>
+                    <VideoResult 
+                      videoUrl={videoUrl} 
+                      jobId={jobId} 
+                      campaignId={campaignId}
+                      onNewAd={() => {
+                        setStatus('idle')
+                        setVideoUrl(null)
+                        setJobId(null)
+                        setCampaignId(null)
+                      }} 
+                    />
+                    {campaignId && <SceneGallery campaignId={campaignId} apiUrl={API_URL} />}
+                  </>
                 )}
 
-                {status === 'error' && error && (
-                  <div className={styles.error} role="alert" aria-live="assertive">
-                    <h3>Generation error</h3>
-                    <p>{error}</p>
-                    <button type="button" onClick={() => setStatus('idle')}>Try Again</button>
-                  </div>
+                {status === 'error' && (
+                  <>
+                    {campaignId ? (
+                      <PipelineError
+                        jobId={jobId}
+                        campaignId={campaignId}
+                        failedStage={failedStage || 'render'}
+                        errorMessage={error}
+                        apiUrl={API_URL}
+                        onRetry={(data) => {
+                          if (data && data.job_id) {
+                            setJobId(data.job_id)
+                            setStatus('polling')
+                            setError(null)
+                            setFailedStage(null)
+                          }
+                        }}
+                      />
+                    ) : (
+                      <div className={styles.error} role="alert" aria-live="assertive">
+                        <h3>Generation error</h3>
+                        <p>{error}</p>
+                        <button type="button" onClick={() => setStatus('idle')}>Try Again</button>
+                      </div>
+                    )}
+                    {campaignId && <SceneGallery campaignId={campaignId} apiUrl={API_URL} />}
+                  </>
                 )}
               </div>
             </section>

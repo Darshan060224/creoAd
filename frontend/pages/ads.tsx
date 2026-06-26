@@ -48,8 +48,8 @@ export default function AdsPage() {
   return (
     <PageShell title="My Ads" subtitle="Browse generated campaigns, preview output, and open any ad in the editor.">
       <section style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 20 }}>
-        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search ads" style={{ minWidth: 280, flex: '1 1 320px', padding: '14px 16px', borderRadius: 14, border: '1px solid var(--border)', background: '#fff' }} />
-        <select value={status} onChange={(e) => setStatus(e.target.value)} style={{ padding: '14px 16px', borderRadius: 14, border: '1px solid var(--border)', background: '#fff' }}>
+        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search ads" style={{ minWidth: 280, flex: '1 1 320px', padding: '14px 16px', borderRadius: 14, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)' }} />
+        <select value={status} onChange={(e) => setStatus(e.target.value)} style={{ padding: '14px 16px', borderRadius: 14, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)' }}>
           <option value="all">All statuses</option>
           <option value="queued">Queued</option>
           <option value="running">Running</option>
@@ -59,21 +59,21 @@ export default function AdsPage() {
       </section>
 
       {filtered.length === 0 ? (
-        <div style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: 20, padding: 28, textAlign: 'center' }}>
+        <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 20, padding: 28, textAlign: 'center' }}>
           <h3 style={{ margin: 0 }}>No ads yet</h3>
-          <p style={{ color: '#555' }}>Generate a campaign in Studio and it will appear here.</p>
-          <Link href="/studio" style={{ display: 'inline-flex', marginTop: 8, padding: '12px 16px', borderRadius: 999, background: 'var(--primary)', color: '#fff', textDecoration: 'none', fontWeight: 800 }}>Go to Studio</Link>
+          <p style={{ color: 'var(--muted)' }}>Generate a campaign in Studio and it will appear here.</p>
+          <Link href="/studio" style={{ display: 'inline-flex', marginTop: 8, padding: '12px 16px', borderRadius: 999, background: 'var(--purple)', color: '#fff', textDecoration: 'none', fontWeight: 800 }}>Go to Studio</Link>
         </div>
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 18 }}>
           {filtered.map((ad) => (
-            <article key={ad.campaign_id} style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: 20, overflow: 'hidden' }}>
+            <article key={ad.campaign_id} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 20, overflow: 'hidden' }}>
               <div style={{ aspectRatio: '16 / 9', background: 'linear-gradient(135deg, #4f46e5, #ff5500)' }} />
               <div style={{ padding: 18 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start' }}>
                   <div>
                     <h3 style={{ margin: '0 0 6px' }}>{ad.business_url || 'Untitled ad'}</h3>
-                    <div style={{ color: '#666', fontSize: 14 }}>{ad.video_duration || 30}s · Campaign {ad.campaign_id?.slice(0, 8)}</div>
+                    <div style={{ color: 'var(--muted)', fontSize: 14 }}>{ad.video_duration || 30}s · Campaign {ad.campaign_id?.slice(0, 8)}</div>
                   </div>
                   <StatusBadge status={ad.status} />
                 </div>

@@ -64,6 +64,7 @@ class Settings(BaseSettings):
     comfyui_steps: int = int(os.getenv("COMFYUI_STEPS", "8"))
     comfyui_cfg: float = float(os.getenv("COMFYUI_CFG", "2.5"))
     comfyui_sampler: str = os.getenv("COMFYUI_SAMPLER", "euler_ancestral")
+    require_ai_video: bool = os.getenv("REQUIRE_AI_VIDEO", "false").lower() in {"1", "true", "yes", "on"}
 
     # Scraping providers
     lightpanda_base_url: str = os.getenv("LIGHTPANDA_BASE_URL", "")
@@ -95,8 +96,8 @@ class Settings(BaseSettings):
     job_timeout_video: int = 300   # 5 min
     
     # API settings
-    api_host: str = "0.0.0.0"
-    api_port: int = 8000
+    api_host: str = os.getenv("API_HOST", "0.0.0.0")
+    api_port: int = int(os.getenv("API_PORT", "8000"))
     
 settings = Settings()
 

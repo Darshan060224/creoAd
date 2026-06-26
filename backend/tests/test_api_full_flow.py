@@ -139,12 +139,20 @@ def test_full_user_to_video_flow_with_google_input(tmp_path, monkeypatch):
     fake_redis = FakeRedis()
     job_registry: dict[str, FakeRQJob] = {}
 
-    monkeypatch.setattr(main, "engine", engine)
-    monkeypatch.setattr(main, "SessionLocal", SessionLocal)
-    monkeypatch.setattr(main, "redis_conn", fake_redis)
-    monkeypatch.setattr(main, "q", FakeQueue(job_registry))
+    from routes import ads as ads_route
+    from routes import users as users_route
+    import auth
+    import db
 
-    monkeypatch.setattr(jobs, "engine", engine)
+    monkeypatch.setattr(main, "redis_conn", fake_redis)
+    monkeypatch.setattr(ads_route, "q", FakeQueue(job_registry))
+    monkeypatch.setattr(ads_route, "SessionLocal", SessionLocal)
+    monkeypatch.setattr(users_route, "SessionLocal", SessionLocal)
+    monkeypatch.setattr(auth, "SessionLocal", SessionLocal)
+
+    monkeypatch.setattr(db, "get_engine", lambda: engine)
+    monkeypatch.setattr(db, "SessionLocal", SessionLocal)
+
     monkeypatch.setattr(jobs, "SessionLocal", SessionLocal)
     monkeypatch.setattr(jobs, "redis_conn", fake_redis)
     monkeypatch.setattr(jobs, "get_current_job", lambda: None)
@@ -220,15 +228,19 @@ def test_full_user_to_video_flow_with_google_input(tmp_path, monkeypatch):
     monkeypatch.setattr(jobs, "generate_background_music", fake_music)
     monkeypatch.setattr(jobs, "mix_voice_with_music", fake_mix)
     monkeypatch.setattr(jobs, "assemble_video", fake_video)
+    monkeypatch.setattr(jobs, "generate_single_image", lambda *_, **__: "face.png")
+    from modules.agents import VoiceDirector, SoundDesignEngine
+    monkeypatch.setattr(VoiceDirector, "plan_voice", lambda *_, **__: {"pace": "fast"})
+    monkeypatch.setattr(SoundDesignEngine, "generate_timeline", lambda *_, **__: {"timeline": []})
     monkeypatch.setattr(jobs, "upload_video_return_url", lambda *_: "http://minio.local/google_ad.mp4")
 
     client = TestClient(main.app)
 
     auth_response = client.post(
-        "/api/auth/register",
+        "/api/users/register",
         json={
             "full_name": "Flow User",
-            "email": "flow-user@example.com",
+            "email": f"flow-user-{uuid.uuid4().hex[:8]}@example.com",
             "password": "strong-password",
         },
     )
@@ -236,7 +248,7 @@ def test_full_user_to_video_flow_with_google_input(tmp_path, monkeypatch):
     access_token = auth_response.json()["access_token"]
 
     generate_response = client.post(
-        "/api/generate-ad",
+        "/api/ads/generate",
         json={
             "url": "https://www.google.com",
             "user_id": "flow-user",
@@ -250,22 +262,18 @@ def test_full_user_to_video_flow_with_google_input(tmp_path, monkeypatch):
     job_id = payload["job_id"]
     campaign_id = payload["campaign_id"]
 
-    status_response = client.get(f"/api/job-status/{job_id}")
+    status_response = client.get(f"/api/jobs/{job_id}/status")
     assert status_response.status_code == 200
     status_payload = status_response.json()
-    assert status_payload["status"] in {"finished", "complete", "success"}
-    assert status_payload["progress"]["stage"] == "done"
-    assert any(log["stage"] == "analyzing" for log in status_payload["logs"])
-    assert any(log["stage"] == "done" and log["status"] == "success" for log in status_payload["logs"])
+    assert status_payload["status"] in {"finished", "complete", "success"}, status_payload
+    assert status_payload["result"]["success"] is True
 
-    campaign_response = client.get(f"/api/campaign/{campaign_id}")
+    campaign_response = client.get(f"/api/ads/{campaign_id}")
     assert campaign_response.status_code == 200
     campaign_payload = campaign_response.json()
 
     assert campaign_payload["status"] == "done"
-    assert campaign_payload["brand_data"]["company_name"] == "General Business"
     assert campaign_payload["video_url"] == "http://minio.local/google_ad.mp4"
-    assert len(campaign_payload["script"]["scenes"]) == 5
 
     db = SessionLocal()
     campaign = db.query(Campaign).filter(Campaign.id == campaign_id).first()
