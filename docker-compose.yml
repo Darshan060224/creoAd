@@ -1,0 +1,99 @@
+version: '3.8'
+
+services:
+  redis:
+    image: redis:alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: creoad
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: creoad
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: creoad
+      MINIO_ROOT_PASSWORD: creoad123
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=postgresql://creoad:password@postgres:5432/creoad
+      - MINIO_URL=http://minio:9000
+      - MINIO_ACCESS_KEY=creoad
+      - MINIO_SECRET_KEY=creoad123
+      - OLLAMA_BASE_URL=http://ollama:11434
+    depends_on:
+      - redis
+      - postgres
+      - minio
+      - ollama
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: ./backend
+    command: rq worker ad_jobs --with-scheduler --url redis://redis:6379/0
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=postgresql://creoad:password@postgres:5432/creoad
+      - MINIO_URL=http://minio:9000
+      - MINIO_ACCESS_KEY=creoad
+      - MINIO_SECRET_KEY=creoad123
+      - OLLAMA_BASE_URL=http://ollama:11434
+    depends_on:
+      - redis
+      - postgres
+      - minio
+      - ollama
+      - backend
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - NEXT_PUBLIC_MINIO_URL=http://localhost:9000
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  redis_data:
+  postgres_data:
+  minio_data:
+  ollama_data:
